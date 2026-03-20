@@ -7,9 +7,12 @@ from datetime import datetime
 router = APIRouter()
 
 
-# ------------------ INGEST API ------------------
 @router.post("/patients/{patient_id}/medications")
 async def ingest_medications(patient_id: str, snapshot: Snapshot):
+
+    # validation
+    if not snapshot.sources:
+        return {"error": "No sources provided"}
 
     # get latest version
     latest = await db.snapshots.find_one(
@@ -22,37 +25,48 @@ async def ingest_medications(patient_id: str, snapshot: Snapshot):
         new_version = latest["version"] + 1
 
     data = snapshot.dict()
+
+    # NORMALIZATION ✅
+    for source in data["sources"]:
+        source["type"] = source["type"].lower().strip()
+
+        for med in source["medications"]:
+            med["name"] = med["name"].lower().strip()
+            med["dosage"] = med["dosage"].lower().strip()
+            med["status"] = med["status"].lower().strip()
+
     data["patient_id"] = patient_id
     data["version"] = new_version
     data["created_at"] = datetime.utcnow()
 
-    # store snapshot
-    await db.snapshots.insert_one(data)
+    try:
+        # store snapshot
+        await db.snapshots.insert_one(data)
 
-    # detect conflicts
-    conflicts = detect_conflicts(data["sources"])
+        # detect conflicts
+        conflicts = detect_conflicts(data["sources"])
 
-    # store conflicts
-    if len(conflicts) > 0:
-        for conflict in conflicts:
-            conflict["patient_id"] = patient_id
-            conflict["version"] = new_version
+        # store conflicts
+        if conflicts:
+            for conflict in conflicts:
+                conflict["patient_id"] = patient_id
+                conflict["version"] = new_version
 
-        await db.conflicts.insert_many(conflicts)
+            await db.conflicts.insert_many(conflicts)
 
-    return {
-        "message": "snapshot stored",
-        "version": new_version
-    }
+        return {
+            "message": "snapshot stored",
+            "version": new_version
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
-# ------------------ GET CONFLICTS ------------------
+# GET conflicts for patient
 @router.get("/conflicts/{patient_id}")
 async def get_conflicts(patient_id: str):
-
-    conflicts = await db.conflicts.find(
-        {"patient_id": patient_id}
-    ).to_list(100)
+    conflicts = await db.conflicts.find({"patient_id": patient_id}).to_list(100)
 
     for c in conflicts:
         c["_id"] = str(c["_id"])
@@ -63,13 +77,10 @@ async def get_conflicts(patient_id: str):
     }
 
 
-# ------------------ REPORT API ------------------
+# unresolved conflicts
 @router.get("/reports/unresolved-conflicts")
 async def unresolved_conflicts():
-
-    conflicts = await db.conflicts.find(
-        {"resolved": False}
-    ).to_list(100)
+    conflicts = await db.conflicts.find({"resolved": False}).to_list(100)
 
     for c in conflicts:
         c["_id"] = str(c["_id"])
@@ -77,4 +88,15 @@ async def unresolved_conflicts():
     return {
         "total_unresolved": len(conflicts),
         "data": conflicts
+    }
+
+
+# AGGREGATION ✅
+@router.get("/reports/patients-with-conflicts")
+async def patients_with_conflicts():
+    patients = await db.conflicts.distinct("patient_id", {"resolved": False})
+
+    return {
+        "total_patients": len(patients),
+        "patients": patients
     }

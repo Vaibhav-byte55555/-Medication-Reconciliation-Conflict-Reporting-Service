@@ -154,3 +154,19 @@ Vaibhav Kadam
 ##  Note
 
 Ensure MongoDB is running before starting the FastAPI server.
+
+## Assumptions
+- Medication names are treated as plain strings
+- Conflict detection is rule-based
+
+## Trade-offs
+- Used MongoDB for flexible schema
+- Simpler rules instead of complex medical logic
+
+## Limitations
+- No real drug interaction database
+- Limited validation
+
+## AI Usage
+- Used AI for structure and debugging
+- Manually verified logic and added improvements
